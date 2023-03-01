@@ -1,103 +1,106 @@
 import argparse
 import json
 import PIL
-from PIL import Image
 import torch
-from torch import nn
-import torch.nn.functional as F
 import numpy as np
-from torchvision import models, transforms
+from math import ceil
+from train import check_gpu
+from torchvision import models
 
-def arg_parse():
-    parser = argparse.ArgumentParser(description='Image Classifier Prediction')
+def arg_parser():
+    parser = argparse.ArgumentParser(description="predict.py")
+    parser.add_argument('--image',type=str,help='Point to impage file for prediction.',required=True)
+    parser.add_argument('--checkpoint',type=str,help='Point to checkpoint file as str.',required=True)
+    parser.add_argument('--top_k',type=int,help='Choose top K matches as int.')
+    parser.add_argument('--category_names', dest="category_names", action="store", default='cat_to_name.json')
+    parser.add_argument('--gpu', default="gpu", action="store", dest="gpu")
 
-    parser.add_argument('image_dir')
-    parser.add_argument('checkpoint_dir')
-    parser.add_argument('--gpu', help='Use GPU for training', default='cpu')
-    parser.add_argument('--top_k', type=int, help='Return top K most likely classes', default=5)
-    parser.add_argument('--category_names', help='Use a mapping of categories to real names', default='cat_to_name.json')
+    args = parser.parse_args()
+    
+    return args
 
-    return parser.parse_args()
-
-def load_model(arch):
-    exec('model = models.{}(pretrained=True)'.format(arch), globals())
-
-    for param in model.parameters():
-        param.requires_grad = False
-    return model
-
-def initialize_classifier(model, hidden_units=150, out_features=102):
-    in_features = model.fc.in_features
-    classifier = nn.Sequential(nn.Linear(in_features, hidden_units),
-                               nn.ReLU(),
-                               nn.Dropout(0.2),
-                               nn.Linear(hidden_units, out_features),
-                               nn.LogSoftmax(dim=1))
-    return classifier
 
 def load_checkpoint(checkpoint_path):
-    checkpoint = torch.load(checkpoint_path)
-
-    arch = checkpoint['arch']
-    hidden_units = checkpoint['hidden_units']
-    output_features = checkpoint['output_features']
-
-    model = load_model(arch)
-    if hasattr('model', 'classifier'):
-        model.classifier = initialize_classifier(model, hidden_units, output_features)
-    else:
-        model.fc = initialize_classifier(model, hidden_units, output_features)
-
-    model.load_state_dict(checkpoint['state_dict'])
+    
+    checkpoint = torch.load("checkpoint.pth")
+    
+     model = models.vgg16(pretrained=True)
+        model.name = "vgg16"
+    
+    
+    
+    for param in model.parameters(): 
+        param.requires_grad = False
+    
+    # Load from checkpoint
     model.class_to_idx = checkpoint['class_to_idx']
-
+    model.classifier = checkpoint['classifier']
+    model.load_state_dict(checkpoint['state_dict'])
+    
     return model
 
 def process_image(image):
-    image_transforms = transforms.Compose([transforms.Resize(255),
-                                           transforms.CenterCrop(224),
-                                           transforms.ToTensor(),
-                                           transforms.Normalize([0.485, 0.456, 0.406],
-                                                                [0.229, 0.224, 0.225])])
+    img = PIL.Image.open(image)
 
-    pil_image = Image.open(image)
-    tensor_image = image_transforms(pil_image)
-    return tensor_image
+    original_width, original_height = img.size
+    
+    if original_width < original_height:
+        size=[256, 256**600]
+    else: 
+        size=[256**600, 256]
+        
+    img.thumbnail(size)
+   
+    center = original_width/4, original_height/4
+    left, top, right, bottom = center[0]-(244/2), center[1]-(244/2), center[0]+(244/2), center[1]+(244/2)
+    img = img.crop((left, top, right, bottom))
 
-def predict(image_path, model, topk):
+    numpy_img = np.array(img)/255 
 
-    input_img = process_image(image_path)
-    input_img = input_img.unsqueeze_(0)
-    input_img = input_img.float()
+    # Normalize each color channel
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    numpy_img = (numpy_img-mean)/std
+        
+    # Set the color to the first channel
+    numpy_img = numpy_img.transpose(2, 0, 1)
+    
+    return numpy_img
 
-    output = model(input_img)
+ach())[0]
+    
+    # Convert to classes
+    idx_to_class = {val: key for key, val in    
+                                      model.class_to_idx.items()}
+    top_labels = [idx_to_class[lab] for lab in top_labels]
+    top_flowers = [cat_to_name[lab] for lab in top_labels]
+    
+    return top_probs, top_labels, top_flowers
 
-    probability = F.softmax(output.data,dim=1)
 
-    return probability.topk(topk)
+def print_probability(probs, flowers):
+    #Converts two lists into a dictionary to print on screen
+    for i, j in enumerate(zip(flowers, probs)):
+        print ("Rank {}:".format(i+1),
+               "Flower: {}, liklihood: {}%".format(j[1], ceil(j[0]*100)))
+
 
 def main():
-    args = arg_parse()
+    
+    args = arg_parser()
+    
+    with open(args.category_names, 'r') as f:
+        	cat_to_name = json.load(f)
 
-    image_dir = args.image_dir
-    checkpoint_dir = args.checkpoint_dir
-    gpu = args.gpu
-    top_k = args.top_k
-    category_names = args.category_names
+    model = load_checkpoint(args.checkpoint)
+    
+    image_tensor = process_image(args.image)
+    
+    device = check_gpu(gpu_arg=args.gpu);
+    
+    top_probs, top_labels, top_flowers = predict(image_tensor, model,device, cat_to_name,args.top_k)
+    
+    
+    print_probability(top_flowers, top_probs)
 
-    with open(args.category_names, 'r') as json_file:
-        cat_to_name = json.load(json_file)
-
-    model = load_checkpoint(checkpoint_dir)
-
-    image_tensor = process_image(args.image_dir)
-
-    ps = predict(image_dir, model, top_k)
-    labels = [cat_to_name[str(index + 1)] for index in np.array(ps[1][0])]
-    probability = np.array(ps[0][0])
-
-    for i in range(top_k):
-        print("{} with a probability of {}".format(labels[i], probability[i]))
-
-if __name__ == '__main__':
-    main()
+if __name__ == '__main__': main()
