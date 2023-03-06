@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser()
 #Image input
 parser.add_argument('input', type = str, action = 'store', nargs = '*', default = '/home/workspace/ImageClassifier/flowers/test/1/image_06752.jpg')
 #Checkpoint
-parser.add_argument('checkpoint', type = str, action = 'store', nargs = '*', default = '/home/workspace/ImageClassifier/my_checkpoint.pth')
+parser.add_argument('checkpoint', type = str, action = 'store', nargs = '*', default = '/home/workspace/ImageClassifier/checkpoint.pth')
 #Top-k
 parser.add_argument('--top_k', action = 'store', dest = 'top_k', type = int, default = 5)
 #Category names
